@@ -52,4 +52,4 @@ libfs.a: $(objs)
 # Cleaning rule
 clean:
 	@echo "CLEAN	$(CUR_PWD)"
-	$(Q)rm -f $(objs) $(deps) $(target)
+	$(Q)rm -f $(objs) $(deps) $(lib)
