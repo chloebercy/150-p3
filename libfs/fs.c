@@ -12,6 +12,7 @@
 
 #define NUM_ENTRIES_FAT_BLOCK 2048
 #define FAT_EOC 0xFFFF
+#define NUM_ENTRIES_ROOT_DIRECTORY 128
 
 /* Superblock data structure */
 struct __attribute__((__packed__)) superblock{
@@ -31,62 +32,101 @@ struct __attribute__((__packed__)) fat_block{
 };
 
 /* Root directory data structure */
-struct __attribute__((__packed__)) root_directory{
+typedef struct __attribute__((__packed__)) root_directory_entry{
 	char 		filename[FS_FILENAME_LEN];
 	uint32_t 	file_size;
 	uint16_t 	first_data_block_index;
 	uint8_t 	padding[10];
 
+} rdir_entry;
+
+struct __attribute__((__packed__)) root_directory{
+	rdir_entry	rdir_entries[NUM_ENTRIES_ROOT_DIRECTORY];
 };
 
 struct superblock sb;
-// Dynamically allocate FAT later because we don't know it until superblock
-struct fat_block* fat;
+struct fat_block *fat;
 struct root_directory rd;
 
-// To track whether FS is currently mounted
 int mounted = 0;
 
 int fs_mount(const char *diskname)
 {
+	// Open Virtual Disk
 	if (block_disk_open(diskname) == -1){
 		return -1;
 	}
 
-	// Fill out Superblock
-	block_read(0, &sb);
-
-	/* !!!Need to implement error checking here I think!!!*/
-
-	// Allocate FAT array and fill it out
-	fat = (struct fat_block*)malloc(sizeof(struct fat_block) * sb.fat_blocks);
-	int fatIndex = 1;
-	while (fatIndex <= sb.fat_blocks){
-		block_read(fatIndex, &fat[fatIndex-1]);
-		fatIndex++;
+	// Read Metadata - Superblock
+	if (block_read(0, &sb) == -1)
+		return -1;
+	
+	// Read Metadata - File Allocation Table
+	fat = malloc(sizeof(struct fat_block) * sb.fat_blocks);
+	for (int index = 1; index <= sb.fat_blocks; index++){
+		if (block_read(index, &fat[index-1]) == -1)
+			return -1;
 	}
 
-	// Fill out Root directory
-	block_read(fatIndex, &rd);
-
-
-	/* ! I feel like there is definitely more to do here that I am missing ! */
-
+	// Read Metadata - Root Directory
+	if (block_read(sb.fat_blocks+1 , &rd) == -1)
+		return -1;
 
 	mounted = 1;
+
 	return 0;
 }
 
 int fs_umount(void)
 {
+	// Write Metadata to Disk - Superblock
+	if (block_write(0, &sb) == -1)
+		return -1;
+
+	// Write Metadata to Disk - File Allocation Table
+	for (int index = 1; index <= sb.fat_blocks; index++){
+		if (block_write(index, &fat[index-1]) == -1)
+			return -1;
+	} 
+
+	// Write Metadata to Disk - Root Directory
+	if (block_write(sb.fat_blocks+1, &rd) == -1)
+		return -1;
+
 	// Also need to check if still open FDs, but not implemented as of Phase 1
 	if (!mounted || block_disk_close() == -1){
 		return -1;
 	}
 
-
 	mounted = 0;
+
 	return 0;
+}
+
+int fat_free(void)
+{
+	int count = 0;
+
+	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++){
+		for (int entryIndex = 0; entryIndex < NUM_ENTRIES_FAT_BLOCK; entryIndex++){
+			if (fat[fatIndex].data_block[entryIndex] == 0)
+				count ++;
+		}
+	} 
+
+	return count;
+}
+
+int rdir_free(void)
+{
+	int count = 0;
+
+	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
+		if (rd.rdir_entries[0].filename[0] == '\0')
+			count++;
+	}
+
+	return count;
 }
 
 int fs_info(void)
@@ -101,10 +141,8 @@ int fs_info(void)
 	printf("rdir_blk=%d\n", sb.fat_blocks + 1);
 	printf("data_blk=%d\n", sb.fat_blocks + 2);
 	printf("data_blk_count=%d\n", sb.total_data_blocks);
-
-	/* Not implemented */
-	printf("fat_free_ratio=%d/%d\n", 0, 0);
-	printf("rdir_free_ratio=%d/%d\n", 0, 0);
+	printf("fat_free_ratio=%d/%d\n", fat_free(), sb.total_data_blocks);
+	printf("rdir_free_ratio=%d/%d\n", rdir_free(), NUM_ENTRIES_ROOT_DIRECTORY);
 
 	return 0;
 }
