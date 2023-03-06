@@ -33,7 +33,7 @@ struct __attribute__((__packed__)) fat_block{
 
 /* Root directory data structure */
 typedef struct __attribute__((__packed__)) root_directory_entry{
-	char 		filename[FS_FILENAME_LEN];
+	uint8_t  	filename[FS_FILENAME_LEN];
 	uint32_t 	file_size;
 	uint16_t 	first_data_block_index;
 	uint8_t 	padding[10];
@@ -49,6 +49,25 @@ struct fat_block *fat;
 struct root_directory rd;
 
 int mounted = 0;
+
+int fs_format_check(void)
+{
+	char sig[8] = {'E', 'C', 'S', '1', '5', '0', 'F', 'S'};
+	for (int index = 0; index < 8; index++){
+		if (sb.signature[index] != sig[index]){
+			perror("incorrect signature");
+			return -1;
+		}
+	}
+
+	int total_amt_blocks = 1 + sb.fat_blocks + 1 + sb.total_data_blocks;
+	if (total_amt_blocks != block_disk_count()){
+		perror("incorrect total amount of blocks");
+		return -1;
+	}
+		
+	return 0;
+}
 
 int fs_mount(const char *diskname)
 {
@@ -68,6 +87,10 @@ int fs_mount(const char *diskname)
 
 	// Read Metadata - Root Directory
 	if (block_read(sb.fat_blocks+1 , &rd) == -1)
+		return -1;
+
+	// Check for Proper Format 
+	if (fs_format_check() == -1)
 		return -1;
 
 	mounted = 1;
