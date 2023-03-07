@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -6,8 +7,6 @@
 
 #include "disk.h"
 #include "fs.h"
-
-/* TODO: Phase 1 */
 
 
 #define NUM_ENTRIES_FAT_BLOCK 2048
@@ -122,6 +121,7 @@ int fs_umount(void)
 	return 0;
 }
 
+/* Returns sum of free entries in File Allocation Tree. */
 int fat_free(void)
 {
 	int count = 0;
@@ -135,15 +135,34 @@ int fat_free(void)
 	return count;
 }
 
-int rdir_free(void)
+/* Returns either sum of free entries in root directory or first free entry
+   depending on value of bool 'total'. */
+int rdir_free(bool sum)
 {
 	int count = 0;
 
-	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++)
-		if (rd.rdir_entries[0].filename[0] == '\0')
+	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
+		if (rd.rdir_entries[entry].filename[0] == '\0'){
+			if (sum == false)
+				return entry;
 			count++;
+		}	
+	}
 
+	if (sum == false)
+		return -1;	
+	
 	return count;
+}
+
+/* Searches for entry in root directory with specific 'filename'. */
+int rdir_search(const char *filename)
+{
+	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++)
+		if (strcmp((const char *)rd.rdir_entries[entry].filename, filename) == 0)
+			return entry;	
+
+	return -1;
 }
 
 int fs_info(void)
@@ -158,38 +177,63 @@ int fs_info(void)
 	printf("data_blk=%d\n", sb.fat_blocks + 2);
 	printf("data_blk_count=%d\n", sb.total_data_blocks);
 	printf("fat_free_ratio=%d/%d\n", fat_free(), sb.total_data_blocks);
-	printf("rdir_free_ratio=%d/%d\n", rdir_free(), NUM_ENTRIES_ROOT_DIRECTORY);
+	printf("rdir_free_ratio=%d/%d\n", rdir_free(true), NUM_ENTRIES_ROOT_DIRECTORY);
 
 	return 0;
 }
 
 int fs_create(const char *filename)
 {
-	/* TODO: Phase 2 */
+	int index;
+	// is there a rule where you cna't create two files with the same name for this proj?
+	if ((index = rdir_free(false)) == -1){
+		perror("no available space");
+		return -1;
+	}
 
+	memcpy(rd.rdir_entries[index].filename, filename, FS_FILENAME_LEN);
 
-	// temp code - just to compile
-	if (filename)
-		return 0;
-	return 0;
+	rd.rdir_entries[index].file_size = 0;
+	rd.rdir_entries[index].first_data_block_index = FAT_EOC;
+
+	return 0;	
 }
 
 int fs_delete(const char *filename)
 {
-	/* TODO: Phase 2 */
+	int rdirIndex;
 
-	// temp code - just to compile
-	if (filename)
-		return 0;
+	if ((rdirIndex = rdir_search(filename)) == -1){
+		perror("file does not exist");
+		return -1;
+	}	
+
+
+	int dataIndex, dataIndexNext;
+	int fatindex = 0; // I'm not sure yet how to know which fat block to go into tho :/ 
+	dataIndex = rd.rdir_entries[rdirIndex].first_data_block_index;
+	while (dataIndex != FAT_EOC){
+		dataIndexNext = fat[fatindex].fat_entries[dataIndex]; 
+		fat[fatindex].fat_entries[dataIndex] = 0;
+		dataIndex = dataIndexNext;
+	}
+
+	rd.rdir_entries[rdirIndex].filename[0] = '\0';
+
 	return 0;
 }
 
 int fs_ls(void)
 {
-	/* TODO: Phase 2 */
+	printf("FS Ls:\n");
 
+	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
+		if(rd.rdir_entries[entry].filename[0] != '\0')
+			printf("file: %s, size: %d, data_blk: %d\n", rd.rdir_entries[entry].filename,
+			rd.rdir_entries[entry].file_size, 
+			rd.rdir_entries[entry].first_data_block_index); // this looks super bulky
+	}
 
-	// temp code - just to compile
 	return 0;
 }
 
