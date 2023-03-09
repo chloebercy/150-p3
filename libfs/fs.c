@@ -31,21 +31,22 @@ struct __attribute__((__packed__)) fat_block{
 };
 
 /* Root directory data structure */
-typedef struct __attribute__((__packed__)) root_directory_entry{
+struct __attribute__((__packed__)) root_directory_entry{
 	uint8_t  	filename[FS_FILENAME_LEN];
 	uint32_t 	file_size;
 	uint16_t 	first_data_block_index;
 	uint8_t 	padding[10];
 
-} rdir_entry;
+};
 
-struct __attribute__((__packed__)) root_directory{
-	rdir_entry	rdir_entries[NUM_ENTRIES_ROOT_DIRECTORY];
+struct file_descriptor{
+	size_t offset;
+	int file_descriptor;	
 };
 
 struct superblock sb;
 struct fat_block *fat;
-struct root_directory rd;
+struct root_directory_entry rd[NUM_ENTRIES_ROOT_DIRECTORY];
 
 int mounted = 0;
 
@@ -113,7 +114,7 @@ int fs_umount(void)
 		return -1;
 
 	// Also need to check if still open FDs, but not implemented as of Phase 1
-	if (!mounted || block_disk_close() == -1)
+	if ( !mounted || block_disk_close() == -1)
 		return -1;
 
 	mounted = 0;
@@ -142,7 +143,7 @@ int rdir_free(bool sum)
 	int count = 0;
 
 	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
-		if (rd.rdir_entries[entry].filename[0] == '\0'){
+		if (rd[entry].filename[0] == '\0'){
 			if (sum == false)
 				return entry;
 			count++;
@@ -159,7 +160,7 @@ int rdir_free(bool sum)
 int rdir_search(const char *filename)
 {
 	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++)
-		if (strcmp((const char *)rd.rdir_entries[entry].filename, filename) == 0)
+		if (strcmp((const char *)rd[entry].filename, filename) == 0)
 			return entry;	
 
 	return -1;
@@ -184,42 +185,78 @@ int fs_info(void)
 
 int fs_create(const char *filename)
 {
+	// No FS currently mounted
+	if (!mounted){
+		return -1;
+	}
+	// File named @filename already exists
+	if (rdir_search(filename) != -1){
+		return -1;
+	}
+	// String @filename is too long (strlen does not include '/0')
+	if (strlen(filename) >= FS_FILENAME_LEN){
+		return -1;
+	}
+
 	int index;
-	// is there a rule where you cna't create two files with the same name for this proj?
+	// Root directory file limit reached, also setting index if not
 	if ((index = rdir_free(false)) == -1){
 		perror("no available space");
 		return -1;
 	}
 
-	memcpy(rd.rdir_entries[index].filename, filename, FS_FILENAME_LEN);
+	memcpy(rd[index].filename, filename, FS_FILENAME_LEN);
 
-	rd.rdir_entries[index].file_size = 0;
-	rd.rdir_entries[index].first_data_block_index = FAT_EOC;
+	rd[index].file_size = 0;
+	rd[index].first_data_block_index = FAT_EOC;
 
-	return 0;	
+	// Update the disk - Not sure if this may be needed?
+	// return block_write(sb.root_dir_index, &rd);
+
+	// return 0;	
 }
 
 int fs_delete(const char *filename)
 {
 	int rdirIndex;
 
+	// No FS currently mounted
+	if (!mounted){
+		return -1;
+	}
+	// File @filename is currently open
+	// I don't think this will work yet, we need P3 implemented first
+	// if (){
+	// 	return -1;
+	// }
+
+	// File does not exist, also setting rdirIndex if not
 	if ((rdirIndex = rdir_search(filename)) == -1){
 		perror("file does not exist");
 		return -1;
 	}	
 
-
-	int dataIndex, dataIndexNext;
-	int fatindex = 0; // I'm not sure yet how to know which fat block to go into tho :/ 
-	dataIndex = rd.rdir_entries[rdirIndex].first_data_block_index;
-	while (dataIndex != FAT_EOC){
-		dataIndexNext = fat[fatindex].fat_entries[dataIndex]; 
-		fat[fatindex].fat_entries[dataIndex] = 0;
-		dataIndex = dataIndexNext;
+	// Only need this portion if it's not already empty
+	if (rd[rdirIndex].first_data_block_index != FAT_EOC){
+		int dataIndex;
+		uint16_t entry;
+		uint16_t dataIndexNext;
+		dataIndex = rd[rdirIndex].first_data_block_index / NUM_ENTRIES_FAT_BLOCK;
+		entry = rd[rdirIndex].first_data_block_index % NUM_ENTRIES_FAT_BLOCK;
+		while (fat[dataIndex].fat_entries[entry] != FAT_EOC){
+			dataIndexNext = fat[dataIndex].fat_entries[entry];
+			fat[entry].fat_entries[dataIndex] = 0;
+			dataIndex = dataIndexNext / NUM_ENTRIES_FAT_BLOCK;
+			entry = dataIndexNext % NUM_ENTRIES_FAT_BLOCK;
+		}
 	}
 
-	rd.rdir_entries[rdirIndex].filename[0] = '\0';
+	rd[rdirIndex].filename[0] = '\0';
+	rd[rdirIndex].file_size = 0;
+	rd[rdirIndex].first_data_block_index = FAT_EOC;
 
+	// Need to potentially do block_write again
+	
 	return 0;
 }
 
@@ -228,10 +265,10 @@ int fs_ls(void)
 	printf("FS Ls:\n");
 
 	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
-		if(rd.rdir_entries[entry].filename[0] != '\0')
-			printf("file: %s, size: %d, data_blk: %d\n", rd.rdir_entries[entry].filename,
-			rd.rdir_entries[entry].file_size, 
-			rd.rdir_entries[entry].first_data_block_index); // this looks super bulky
+		if(rd[entry].filename[0] != '\0')
+			printf("file: %s, size: %d, data_blk: %d\n", rd[entry].filename,
+			rd[entry].file_size, 
+			rd[entry].first_data_block_index);
 	}
 
 	return 0;
