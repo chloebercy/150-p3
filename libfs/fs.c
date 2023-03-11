@@ -198,10 +198,10 @@ int fs_create(const char *filename)
 
 
 	// File name @filename is invalid
-	if (strcmp(filename,"/0") == 0)
+	if (strlen(filename) == 0 || strcmp(filename,"/0") == 0)
 		return -1;
 
-	// !!! also need to check if filename is NULL-terminated
+	// TODO: also need to check if filename is NULL-terminated
 
 	// File named @filename already exists
 	if (rdir_search(filename) != -1)
@@ -246,7 +246,7 @@ int fs_delete(const char *filename)
 		return -1;
 	
 	// File name @filename is invalid
-	if (strcmp(filename,"/0") == 0)
+	if (strlen(filename) == 0 || strcmp(filename,"/0") == 0)
 		return -1;
 
 	// File does not exist, also setting rdirIndex if not
@@ -311,19 +311,16 @@ int fs_open(const char *filename)
 	int fdNum, rdirIndex;
 
 	// No more than 32 open file descriptors
-	if ((fdNum = fdtable_free()) == -1){
-		perror("already FS_OPEN_MAX_COUNT  files currently open");
+	if ((fdNum = fdtable_free()) == -1)
 		return -1;
-	}
 
-	// difference between or if @filename is invalid, or if
-	// there is no file named @filename to open??
+	// File name @filename is invalid
+	if (strlen(filename) == 0 || strcmp(filename,"/0") == 0)
+		return -1;
 
 	// Check File Exists
-	if ((rdirIndex = rdir_search(filename)) == -1){
-		perror("filename is invalid");
+	if ((rdirIndex = rdir_search(filename)) == -1)
 		return -1;
-	}
 
 	fdTable[fdNum].offset = 0;
 	fdTable[fdNum].file = &rd[rdirIndex];
@@ -338,11 +335,9 @@ int fs_close(int fd)
 		return -1;
 
 	// Check if fd is valid
-	if (fd > FS_OPEN_MAX_COUNT || fdTable[fd].file == NULL){
+	if (fd >= FS_OPEN_MAX_COUNT || fd < 0 || fdTable[fd].file == NULL)
 		return -1;
-	}
 
-	
 	fdTable[fd].file = NULL;
 
 	return 0;
