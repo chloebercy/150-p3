@@ -186,17 +186,21 @@ int fs_info(void)
 int fs_create(const char *filename)
 {
 	// No FS currently mounted
-	if (!mounted){
+	if (!mounted)
 		return -1;
-	}
+
+	// File named @filename is null
+	if (strcmp(filename,"/0") == 0)
+		return -1;
+
 	// File named @filename already exists
-	if (rdir_search(filename) != -1){
+	if (rdir_search(filename) != -1)
 		return -1;
-	}
+	
 	// String @filename is too long (strlen does not include '/0')
-	if (strlen(filename) >= FS_FILENAME_LEN){
+	if (strlen(filename) >= FS_FILENAME_LEN)
 		return -1;
-	}
+
 
 	int index;
 	// Root directory file limit reached, also setting index if not
@@ -213,7 +217,7 @@ int fs_create(const char *filename)
 	// Update the disk - Not sure if this may be needed?
 	// return block_write(sb.root_dir_index, &rd);
 
-	// return 0;	
+	return 0;	
 }
 
 int fs_delete(const char *filename)
@@ -221,9 +225,9 @@ int fs_delete(const char *filename)
 	int rdirIndex;
 
 	// No FS currently mounted
-	if (!mounted){
+	if (!mounted)
 		return -1;
-	}
+	
 	// File @filename is currently open
 	// I don't think this will work yet, we need P3 implemented first
 	// if (){
@@ -236,27 +240,22 @@ int fs_delete(const char *filename)
 		return -1;
 	}	
 
-	// Only need this portion if it's not already empty
-	if (rd[rdirIndex].first_data_block_index != FAT_EOC){
-		int dataIndex;
-		uint16_t entry;
-		uint16_t dataIndexNext;
-		dataIndex = rd[rdirIndex].first_data_block_index / NUM_ENTRIES_FAT_BLOCK;
-		entry = rd[rdirIndex].first_data_block_index % NUM_ENTRIES_FAT_BLOCK;
-		while (fat[dataIndex].fat_entries[entry] != FAT_EOC){
-			dataIndexNext = fat[dataIndex].fat_entries[entry];
-			fat[entry].fat_entries[dataIndex] = 0;
-			dataIndex = dataIndexNext / NUM_ENTRIES_FAT_BLOCK;
-			entry = dataIndexNext % NUM_ENTRIES_FAT_BLOCK;
-		}
+
+	// Delete entries in FAT blocks
+	uint16_t blockNum, index, content;
+	content = rd[rdirIndex].first_data_block_index;
+	while (content != FAT_EOC){
+		blockNum = content / NUM_ENTRIES_ROOT_DIRECTORY;
+		index = content % NUM_ENTRIES_FAT_BLOCK;
+
+		content = fat[blockNum].fat_entries[index];
+		fat[blockNum].fat_entries[index] = 0;
 	}
 
 	rd[rdirIndex].filename[0] = '\0';
 	rd[rdirIndex].file_size = 0;
 	rd[rdirIndex].first_data_block_index = FAT_EOC;
 
-	// Need to potentially do block_write again
-	
 	return 0;
 }
 
