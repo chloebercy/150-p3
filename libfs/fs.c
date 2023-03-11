@@ -11,7 +11,7 @@
 
 #define NUM_ENTRIES_FAT_BLOCK 2048
 #define FAT_EOC 0xFFFF
-#define NUM_ENTRIES_ROOT_DIRECTORY 128
+
 
 /* Superblock data structure */
 struct __attribute__((__packed__)) superblock{
@@ -36,29 +36,29 @@ struct __attribute__((__packed__)) root_directory_entry{
 	uint32_t 	file_size;
 	uint16_t 	first_data_block_index;
 	uint8_t 	padding[10];
-
 };
 
 struct file_descriptor{
-	size_t offset;
-	int file_descriptor;	
+	int offset;
+	struct root_directory_entry *file;
+	//int file_descriptor;	
 };
 
 struct superblock sb;
 struct fat_block *fat;
-struct root_directory_entry rd[NUM_ENTRIES_ROOT_DIRECTORY];
+struct root_directory_entry rd[FS_FILE_MAX_COUNT];
+struct file_descriptor fdTable[FS_OPEN_MAX_COUNT];
 
 int mounted = 0;
 
 int fs_format_check(void)
 {
 	char sig[8] = {'E', 'C', 'S', '1', '5', '0', 'F', 'S'};
-	for (int index = 0; index < 8; index++){
+	for (int index = 0; index < 8; index++)
 		if (sb.signature[index] != sig[index]){
 			perror("incorrect signature");
 			return -1;
 		}
-	}
 
 	int total_amt_blocks = 1 + sb.fat_blocks + 1 + sb.total_data_blocks;
 	if (total_amt_blocks != block_disk_count()){
@@ -67,6 +67,13 @@ int fs_format_check(void)
 	}
 		
 	return 0;
+}
+
+/* Initalize all file descriptor *file pointers to NULL. */
+void fdtable_init(void)
+{
+	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++)
+		fdTable[fd].file = NULL;
 }
 
 int fs_mount(const char *diskname)
@@ -92,6 +99,8 @@ int fs_mount(const char *diskname)
 	// Check for Proper Format 
 	if (fs_format_check() == -1)
 		return -1;
+
+	fdtable_init();
 
 	mounted = 1;
 
@@ -127,11 +136,10 @@ int fat_free(void)
 {
 	int count = 0;
 
-	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++){
+	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++)
 		for (int entryIndex = 0; entryIndex < NUM_ENTRIES_FAT_BLOCK; entryIndex++)
 			if (fat[fatIndex].fat_entries[entryIndex] == 0)
 				count ++;
-	} 
 
 	return count;
 }
@@ -142,28 +150,17 @@ int rdir_free(bool sum)
 {
 	int count = 0;
 
-	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
+	for (int entry = 0; entry < FS_FILE_MAX_COUNT; entry++)
 		if (rd[entry].filename[0] == '\0'){
 			if (sum == false)
 				return entry;
 			count++;
 		}	
-	}
 
 	if (sum == false)
 		return -1;	
 	
 	return count;
-}
-
-/* Searches for entry in root directory with specific 'filename'. */
-int rdir_search(const char *filename)
-{
-	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++)
-		if (strcmp((const char *)rd[entry].filename, filename) == 0)
-			return entry;	
-
-	return -1;
 }
 
 int fs_info(void)
@@ -178,9 +175,19 @@ int fs_info(void)
 	printf("data_blk=%d\n", sb.fat_blocks + 2);
 	printf("data_blk_count=%d\n", sb.total_data_blocks);
 	printf("fat_free_ratio=%d/%d\n", fat_free(), sb.total_data_blocks);
-	printf("rdir_free_ratio=%d/%d\n", rdir_free(true), NUM_ENTRIES_ROOT_DIRECTORY);
+	printf("rdir_free_ratio=%d/%d\n", rdir_free(true), FS_FILE_MAX_COUNT);
 
 	return 0;
+}
+
+/* Searches for entry in root directory with specific 'filename'. */
+int rdir_search(const char *filename)
+{
+	for (int entry = 0; entry < FS_FILE_MAX_COUNT; entry++)
+		if (strcmp((const char *)rd[entry].filename, filename) == 0)
+			return entry;	
+
+	return -1;
 }
 
 int fs_create(const char *filename)
@@ -189,9 +196,12 @@ int fs_create(const char *filename)
 	if (!mounted)
 		return -1;
 
-	// File named @filename is null
+
+	// File name @filename is invalid
 	if (strcmp(filename,"/0") == 0)
 		return -1;
+
+	// !!! also need to check if filename is NULL-terminated
 
 	// File named @filename already exists
 	if (rdir_search(filename) != -1)
@@ -201,11 +211,9 @@ int fs_create(const char *filename)
 	if (strlen(filename) >= FS_FILENAME_LEN)
 		return -1;
 
-
 	int index;
 	// Root directory file limit reached, also setting index if not
 	if ((index = rdir_free(false)) == -1){
-		perror("no available space");
 		return -1;
 	}
 
@@ -220,6 +228,15 @@ int fs_create(const char *filename)
 	return 0;	
 }
 
+int fdtable_search(const char *filename){
+	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++)
+		if(fdTable[fd].file != NULL && 
+		strcmp((const char *)fdTable[fd].file->filename, filename) == 0)
+			return fd;
+
+	return -1;
+}
+
 int fs_delete(const char *filename)
 {
 	int rdirIndex;
@@ -228,24 +245,23 @@ int fs_delete(const char *filename)
 	if (!mounted)
 		return -1;
 	
-	// File @filename is currently open
-	// I don't think this will work yet, we need P3 implemented first
-	// if (){
-	// 	return -1;
-	// }
+	// File name @filename is invalid
+	if (strcmp(filename,"/0") == 0)
+		return -1;
 
 	// File does not exist, also setting rdirIndex if not
-	if ((rdirIndex = rdir_search(filename)) == -1){
-		perror("file does not exist");
+	if ((rdirIndex = rdir_search(filename)) == -1)
 		return -1;
-	}	
 
+	// File currently open
+	if (fdtable_search(filename) != -1)
+		return -1;
 
 	// Delete entries in FAT blocks
 	uint16_t blockNum, index, content;
 	content = rd[rdirIndex].first_data_block_index;
 	while (content != FAT_EOC){
-		blockNum = content / NUM_ENTRIES_ROOT_DIRECTORY;
+		blockNum = content / FS_FILE_MAX_COUNT;
 		index = content % NUM_ENTRIES_FAT_BLOCK;
 
 		content = fat[blockNum].fat_entries[index];
@@ -261,60 +277,109 @@ int fs_delete(const char *filename)
 
 int fs_ls(void)
 {
+	// No FS currently mounted
+	if (!mounted)
+		return -1;
+		
 	printf("FS Ls:\n");
 
-	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
+	for (int entry = 0; entry < FS_FILE_MAX_COUNT; entry++)
 		if(rd[entry].filename[0] != '\0')
 			printf("file: %s, size: %d, data_blk: %d\n", rd[entry].filename,
 			rd[entry].file_size, 
 			rd[entry].first_data_block_index);
-	}
 
 	return 0;
+}
+
+/* Searches for free entry in fd table. */
+int fdtable_free(void)
+{
+	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++)
+		if(fdTable[fd].file == NULL)
+			return fd;
+
+	return -1;
 }
 
 int fs_open(const char *filename)
 {
-	/* TODO: Phase 3 */
+	// No FS currently mounted
+	if (!mounted)
+		return -1;
 
+	int fdNum, rdirIndex;
 
-	// temp code - just to compile
-	if (filename)
-		return 0;
-	return 0;
+	// No more than 32 open file descriptors
+	if ((fdNum = fdtable_free()) == -1){
+		perror("already FS_OPEN_MAX_COUNT  files currently open");
+		return -1;
+	}
+
+	// difference between or if @filename is invalid, or if
+	// there is no file named @filename to open??
+
+	// Check File Exists
+	if ((rdirIndex = rdir_search(filename)) == -1){
+		perror("filename is invalid");
+		return -1;
+	}
+
+	fdTable[fdNum].offset = 0;
+	fdTable[fdNum].file = &rd[rdirIndex];
+
+	return fdNum;
 }
 
 int fs_close(int fd)
 {
-	/* TODO: Phase 3 */
+	// No FS currently mounted
+	if (!mounted)
+		return -1;
 
+	// Check if fd is valid
+	if (fd > FS_OPEN_MAX_COUNT || fdTable[fd].file == NULL){
+		return -1;
+	}
 
-	// temp code - just to compile
-	if (fd)
-		return 0;
-	return 0;	
+	
+	fdTable[fd].file = NULL;
+
+	return 0;
 }
 
 int fs_stat(int fd)
 {
-	/* TODO: Phase 3 */
+	// No FS currently mounted
+	if (!mounted)
+		return -1;
+	
+	// Check if fd is valid
+	if (fd > FS_OPEN_MAX_COUNT || fdTable[fd].file == NULL){
+		return -1;
+	}
 
-
-	// temp code - just to compile
-	if (fd)
-		return 0; 
-	return 0;	
+	return fdTable[fd].file->file_size;
 }
 
 int fs_lseek(int fd, size_t offset)
 {
-	/* TODO: Phase 3 */
+	// No FS currently mounted
+	if (!mounted)
+		return -1;
 	
+	// Check if fd is valid
+	if (fd > FS_OPEN_MAX_COUNT || fdTable[fd].file == NULL){
+		return -1;
+	}
 
-	// temp code - just to compile
-	if (fd && offset)
-		return 0;
-	return 0;	
+	// Check if @offset is larger than the current file size
+	if (offset > fdTable[fd].file->file_size)
+		return -1;
+
+	fdTable[fd].offset = offset;
+
+	return 0;
 }
 
 int fs_write(int fd, void *buf, size_t count)
