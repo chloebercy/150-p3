@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -6,8 +7,6 @@
 
 #include "disk.h"
 #include "fs.h"
-
-/* TODO: Phase 1 */
 
 
 #define NUM_ENTRIES_FAT_BLOCK 2048
@@ -32,21 +31,22 @@ struct __attribute__((__packed__)) fat_block{
 };
 
 /* Root directory data structure */
-typedef struct __attribute__((__packed__)) root_directory_entry{
+struct __attribute__((__packed__)) root_directory_entry{
 	uint8_t  	filename[FS_FILENAME_LEN];
 	uint32_t 	file_size;
 	uint16_t 	first_data_block_index;
 	uint8_t 	padding[10];
 
-} rdir_entry;
+};
 
-struct __attribute__((__packed__)) root_directory{
-	rdir_entry	rdir_entries[NUM_ENTRIES_ROOT_DIRECTORY];
+struct file_descriptor{
+	size_t offset;
+	int file_descriptor;	
 };
 
 struct superblock sb;
 struct fat_block *fat;
-struct root_directory rd;
+struct root_directory_entry rd[NUM_ENTRIES_ROOT_DIRECTORY];
 
 int mounted = 0;
 
@@ -114,7 +114,7 @@ int fs_umount(void)
 		return -1;
 
 	// Also need to check if still open FDs, but not implemented as of Phase 1
-	if (!mounted || block_disk_close() == -1)
+	if ( !mounted || block_disk_close() == -1)
 		return -1;
 
 	mounted = 0;
@@ -122,6 +122,7 @@ int fs_umount(void)
 	return 0;
 }
 
+/* Returns sum of free entries in File Allocation Tree. */
 int fat_free(void)
 {
 	int count = 0;
@@ -135,15 +136,34 @@ int fat_free(void)
 	return count;
 }
 
-int rdir_free(void)
+/* Returns either sum of free entries in root directory or first free entry
+   depending on value of bool 'total'. */
+int rdir_free(bool sum)
 {
 	int count = 0;
 
-	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++)
-		if (rd.rdir_entries[0].filename[0] == '\0')
+	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
+		if (rd[entry].filename[0] == '\0'){
+			if (sum == false)
+				return entry;
 			count++;
+		}	
+	}
 
+	if (sum == false)
+		return -1;	
+	
 	return count;
+}
+
+/* Searches for entry in root directory with specific 'filename'. */
+int rdir_search(const char *filename)
+{
+	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++)
+		if (strcmp((const char *)rd[entry].filename, filename) == 0)
+			return entry;	
+
+	return -1;
 }
 
 int fs_info(void)
@@ -158,38 +178,98 @@ int fs_info(void)
 	printf("data_blk=%d\n", sb.fat_blocks + 2);
 	printf("data_blk_count=%d\n", sb.total_data_blocks);
 	printf("fat_free_ratio=%d/%d\n", fat_free(), sb.total_data_blocks);
-	printf("rdir_free_ratio=%d/%d\n", rdir_free(), NUM_ENTRIES_ROOT_DIRECTORY);
+	printf("rdir_free_ratio=%d/%d\n", rdir_free(true), NUM_ENTRIES_ROOT_DIRECTORY);
 
 	return 0;
 }
 
 int fs_create(const char *filename)
 {
-	/* TODO: Phase 2 */
+	// No FS currently mounted
+	if (!mounted)
+		return -1;
+
+	// File named @filename is null
+	if (strcmp(filename,"/0") == 0)
+		return -1;
+
+	// File named @filename already exists
+	if (rdir_search(filename) != -1)
+		return -1;
+	
+	// String @filename is too long (strlen does not include '/0')
+	if (strlen(filename) >= FS_FILENAME_LEN)
+		return -1;
 
 
-	// temp code - just to compile
-	if (filename)
-		return 0;
-	return 0;
+	int index;
+	// Root directory file limit reached, also setting index if not
+	if ((index = rdir_free(false)) == -1){
+		perror("no available space");
+		return -1;
+	}
+
+	memcpy(rd[index].filename, filename, FS_FILENAME_LEN);
+
+	rd[index].file_size = 0;
+	rd[index].first_data_block_index = FAT_EOC;
+
+	// Update the disk - Not sure if this may be needed?
+	// return block_write(sb.root_dir_index, &rd);
+
+	return 0;	
 }
 
 int fs_delete(const char *filename)
 {
-	/* TODO: Phase 2 */
+	int rdirIndex;
 
-	// temp code - just to compile
-	if (filename)
-		return 0;
+	// No FS currently mounted
+	if (!mounted)
+		return -1;
+	
+	// File @filename is currently open
+	// I don't think this will work yet, we need P3 implemented first
+	// if (){
+	// 	return -1;
+	// }
+
+	// File does not exist, also setting rdirIndex if not
+	if ((rdirIndex = rdir_search(filename)) == -1){
+		perror("file does not exist");
+		return -1;
+	}	
+
+
+	// Delete entries in FAT blocks
+	uint16_t blockNum, index, content;
+	content = rd[rdirIndex].first_data_block_index;
+	while (content != FAT_EOC){
+		blockNum = content / NUM_ENTRIES_ROOT_DIRECTORY;
+		index = content % NUM_ENTRIES_FAT_BLOCK;
+
+		content = fat[blockNum].fat_entries[index];
+		fat[blockNum].fat_entries[index] = 0;
+	}
+
+	rd[rdirIndex].filename[0] = '\0';
+	rd[rdirIndex].file_size = 0;
+	rd[rdirIndex].first_data_block_index = FAT_EOC;
+
 	return 0;
 }
 
 int fs_ls(void)
 {
-	/* TODO: Phase 2 */
+	printf("FS Ls:\n");
 
+	for (int entry = 0; entry < NUM_ENTRIES_ROOT_DIRECTORY; entry++){
+		if(rd[entry].filename[0] != '\0')
+			printf("file: %s, size: %d, data_blk: %d\n", rd[entry].filename,
+			rd[entry].file_size, 
+			rd[entry].first_data_block_index);
+	}
 
-	// temp code - just to compile
 	return 0;
 }
 
