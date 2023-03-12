@@ -198,32 +198,28 @@ int fs_create(const char *filename)
 
 
 	// File name @filename is invalid
-	if (strlen(filename) == 0 || strcmp(filename,"/0") == 0)
+	if (strlen(filename) == 0 || strcmp(filename,"\0") == 0)
 		return -1;
 
 	// TODO: also need to check if filename is NULL-terminated
-
+	
 	// File named @filename already exists
 	if (rdir_search(filename) != -1)
 		return -1;
 	
-	// String @filename is too long (strlen does not include '/0')
+	// String @filename is too long (strlen does not include '\0')
 	if (strlen(filename) >= FS_FILENAME_LEN)
 		return -1;
 
-	int index;
 	// Root directory file limit reached, also setting index if not
-	if ((index = rdir_free(false)) == -1){
+	int index;
+	if ((index = rdir_free(false)) == -1)
 		return -1;
-	}
 
 	memcpy(rd[index].filename, filename, FS_FILENAME_LEN);
 
 	rd[index].file_size = 0;
 	rd[index].first_data_block_index = FAT_EOC;
-
-	// Update the disk - Not sure if this may be needed?
-	// return block_write(sb.root_dir_index, &rd);
 
 	return 0;	
 }
@@ -246,7 +242,7 @@ int fs_delete(const char *filename)
 		return -1;
 	
 	// File name @filename is invalid
-	if (strlen(filename) == 0 || strcmp(filename,"/0") == 0)
+	if (strlen(filename) == 0 || strcmp(filename,"\0") == 0)
 		return -1;
 
 	// File does not exist, also setting rdirIndex if not
@@ -315,7 +311,7 @@ int fs_open(const char *filename)
 		return -1;
 
 	// File name @filename is invalid
-	if (strlen(filename) == 0 || strcmp(filename,"/0") == 0)
+	if (strlen(filename) == 0 || strcmp(filename,"\0") == 0)
 		return -1;
 
 	// Check File Exists
@@ -350,9 +346,8 @@ int fs_stat(int fd)
 		return -1;
 	
 	// Check if fd is valid
-	if (fd > FS_OPEN_MAX_COUNT || fdTable[fd].file == NULL){
+	if (fd >= FS_OPEN_MAX_COUNT || fd < 0 || fdTable[fd].file == NULL)
 		return -1;
-	}
 
 	return fdTable[fd].file->file_size;
 }
@@ -364,13 +359,12 @@ int fs_lseek(int fd, size_t offset)
 		return -1;
 	
 	// Check if fd is valid
-	if (fd > FS_OPEN_MAX_COUNT || fdTable[fd].file == NULL){
+	if (fd >= FS_OPEN_MAX_COUNT || fd < 0 || fdTable[fd].file == NULL)
 		return -1;
-	}
 
 	// Check if @offset is larger than the current file size
 	if (offset > fdTable[fd].file->file_size)
-		return -1;
+		return -1; 
 
 	fdTable[fd].offset = offset;
 

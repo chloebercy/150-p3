@@ -19,7 +19,9 @@ int main(int argc, char *argv[])
 	int ret;
 	char *diskname;
 	int fd;
-	//char data[26];
+	char data[FS_OPEN_MAX_COUNT+1][FS_FILENAME_LEN] = {"a", "b", "c", "d", "e",
+		"f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", 
+		"t", "u", "v", "w", "x", "y", "z", "1", "2", "3", "4", "5", "6", "7"};
 
 	if (argc < 1) {
 		printf("Usage: %s <diskimage>\n", argv[0]);
@@ -59,6 +61,20 @@ int main(int argc, char *argv[])
 	printf("----------fs_open() Testing----------\n");
 
 	/* Error 1 TODO: FD Table full */
+	for (int i = 0; i < FS_OPEN_MAX_COUNT; i++) {
+		if ((ret = fs_create(data[i])) == -1){printf("internal error\n");}
+		if ((ret = fs_open(data[i])) == -1){printf("internal error\n");}
+	}
+	if ((ret = fs_create(data[FS_OPEN_MAX_COUNT])) == -1){printf("internal error\n");}
+
+	fd = fs_open(data[FS_OPEN_MAX_COUNT]);
+
+	for (int i = 0; i < FS_OPEN_MAX_COUNT; i++) {
+		if ((ret = fs_close(i)) == -1){printf("internal error\n");}
+		if ((ret = fs_delete(data[i])) == -1){printf("internal error\n");}
+	}
+
+	ASSERT(fd == -1, "fdtable full handling");
 
 	/* Error 2 */
 	fd = fs_open("");
@@ -71,6 +87,48 @@ int main(int argc, char *argv[])
 	/* Open */
 	fd = fs_open("file1");
 	ASSERT(fd == 0, "fs_open");
+
+	/*----------fs_stat() Testing Coverage [Currently 4/4]------------------*/
+	printf("----------fs_stat() Testing----------\n");
+
+	/* Error 1 */
+	ret = fs_stat(33);
+	ASSERT(ret == -1, "fd invalid handling");
+
+	/* Error 2 */
+	ret = fs_stat(-2);
+	ASSERT(ret == -1, "fd invalid 2 handling");
+
+	/* Error 3 */
+	ret = fs_stat(2);
+	ASSERT(ret == -1, "fd invalid 3 handling");
+
+	/* Get Size */
+	ret = fs_stat(fd);
+	ASSERT(!ret, "fs_stat");
+
+	/*----------fs_lseek() Testing Coverage [Currently 4/4]------------------*/
+	printf("----------fs_lseek() Testing----------\n");
+
+	/* Error 1 */
+	ret = fs_lseek(33, 0);
+	ASSERT(ret == -1, "fd invalid handling");
+
+	/* Error 2 */
+	ret = fs_lseek(-2, 0);
+	ASSERT(ret == -1, "fd invalid 2 handling");
+
+	/* Error 3 */
+	ret = fs_lseek(2, 0);
+	ASSERT(ret == -1, "fd invalid 3 handling");
+
+	/* Error 4 */
+	ret = fs_lseek(fd, 1);
+	ASSERT(ret == -1, "@offset too large handling");
+
+	/* Change Offset */
+	ret = fs_lseek(fd, 0);
+	ASSERT(!ret, "fs_lseek");
 
 	/*----------fs_close() Testing Coverage [Currently 4/4]------------------*/
 	printf("----------fs_close() Testing----------\n");
@@ -91,7 +149,7 @@ int main(int argc, char *argv[])
 	ret = fs_close(fd);
 	ASSERT(ret == 0, "fd_close");
 
-	/*----------fs_delete() Testing Coverage [Currently 4/5]------------------*/
+	/*----------fs_delete() Testing Coverage [Currently 5/5]------------------*/
 	printf("----------fs_delete() Testing----------\n");
 
 	/* Error 1 */
@@ -100,14 +158,15 @@ int main(int argc, char *argv[])
 
 	/* Error 2*/
 	ret = fs_delete("file2");
-	ASSERT(ret == -1, "fs_delete filename invalid 2 handling");
+	ASSERT(ret == -1, "filename invalid 2 handling");
 
-	/* Error 3 TODO: File currently open*/
-	/*fs_create("file2");
+	/* Error 3 */
+	fs_create("file2");
 	fd = fs_open("file2");
-	fs_close(fd);
 	ret = fs_delete("file2");
-	ASSERT(ret == -1, "filename open handling");*/
+	ASSERT(ret == -1, "filename open handling");
+	fs_close(fd);
+	fs_delete("file2");
 
 	/* Delete */
 	ret = fs_delete("file1");
