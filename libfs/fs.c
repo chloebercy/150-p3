@@ -51,6 +51,8 @@ struct file_descriptor fdTable[FS_OPEN_MAX_COUNT];
 
 int mounted = 0;
 
+/* Phase 1 */
+
 int fs_format_check(void)
 {
 	char sig[8] = {'E', 'C', 'S', '1', '5', '0', 'F', 'S'};
@@ -121,10 +123,17 @@ int fs_umount(void)
 	// Write Metadata to Disk - Root Directory
 	if (block_write(sb.fat_blocks+1, &rd) == -1)
 		return -1;
-
-	// Also need to check if still open FDs, but not implemented as of Phase 1
+	
+	// Check if FS not mounted or disk cannot be closed
 	if ( !mounted || block_disk_close() == -1)
 		return -1;
+
+	// Check if FDs are still open
+	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++){
+		if (fdTable[fd].file != NULL)
+			return -1;
+	}
+
 
 	mounted = 0;
 
@@ -180,6 +189,8 @@ int fs_info(void)
 	return 0;
 }
 
+/* Phase 2 */
+
 /* Searches for entry in root directory with specific 'filename'. */
 int rdir_search(const char *filename)
 {
@@ -200,8 +211,6 @@ int fs_create(const char *filename)
 	// File name @filename is invalid
 	if (strlen(filename) == 0 || strcmp(filename,"\0") == 0)
 		return -1;
-
-	// TODO: also need to check if filename is NULL-terminated
 	
 	// File named @filename already exists
 	if (rdir_search(filename) != -1)
@@ -209,6 +218,10 @@ int fs_create(const char *filename)
 	
 	// String @filename is too long (strlen does not include '\0')
 	if (strlen(filename) >= FS_FILENAME_LEN)
+		return -1;
+
+	// Filename is not NULL-terminated
+	if (filename[strlen(filename)] != '\0')
 		return -1;
 
 	// Root directory file limit reached, also setting index if not
@@ -243,6 +256,10 @@ int fs_delete(const char *filename)
 	
 	// File name @filename is invalid
 	if (strlen(filename) == 0 || strcmp(filename,"\0") == 0)
+		return -1;
+
+	// Filename is not NULL-terminated
+	if (filename[strlen(filename)] != '\0')
 		return -1;
 
 	// File does not exist, also setting rdirIndex if not
@@ -288,6 +305,8 @@ int fs_ls(void)
 	return 0;
 }
 
+/* Phase 3 */
+
 /* Searches for free entry in fd table. */
 int fdtable_free(void)
 {
@@ -324,14 +343,18 @@ int fs_open(const char *filename)
 	return fdNum;
 }
 
+int fd_is_valid(int fd)
+{
+	if (fd >= FS_OPEN_MAX_COUNT || fd < 0 || fdTable[fd].file == NULL)
+		return 0;
+	return 1;
+	
+}
+
 int fs_close(int fd)
 {
-	// No FS currently mounted
-	if (!mounted)
-		return -1;
-
-	// Check if fd is valid
-	if (fd >= FS_OPEN_MAX_COUNT || fd < 0 || fdTable[fd].file == NULL)
+	// No FS currently mounted OR fd invalid
+	if (!mounted || !fd_is_valid(fd))
 		return -1;
 
 	fdTable[fd].file = NULL;
@@ -341,12 +364,8 @@ int fs_close(int fd)
 
 int fs_stat(int fd)
 {
-	// No FS currently mounted
-	if (!mounted)
-		return -1;
-	
-	// Check if fd is valid
-	if (fd >= FS_OPEN_MAX_COUNT || fd < 0 || fdTable[fd].file == NULL)
+	// No FS currently mounted OR fd invalid
+	if (!mounted || !fd_is_valid(fd))
 		return -1;
 
 	return fdTable[fd].file->file_size;
@@ -354,12 +373,8 @@ int fs_stat(int fd)
 
 int fs_lseek(int fd, size_t offset)
 {
-	// No FS currently mounted
-	if (!mounted)
-		return -1;
-	
-	// Check if fd is valid
-	if (fd >= FS_OPEN_MAX_COUNT || fd < 0 || fdTable[fd].file == NULL)
+	// No FS currently mounted OR fd invalid
+	if (!mounted || !fd_is_valid(fd))
 		return -1;
 
 	// Check if @offset is larger than the current file size
@@ -371,9 +386,26 @@ int fs_lseek(int fd, size_t offset)
 	return 0;
 }
 
+
+/* Phase 4 */
+int index_with_offset(void)
+{
+	return 0;
+}
+
+int allocate_block(void)
+{
+	return 0;
+}
+
 int fs_write(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
+	// No FS currently mounted OR fd invalid || buf is NULL
+	if (!mounted || !fd_is_valid(fd) || buf == NULL)
+		return -1;
+
+	
+
 
 	// temp code - just to compile
 	if (fd && buf && count)
@@ -383,7 +415,11 @@ int fs_write(int fd, void *buf, size_t count)
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
+	// No FS currently mounted OR fd invalid || buf is NULL
+	if (!mounted || !fd_is_valid(fd) || buf == NULL)
+		return -1;
+
+
 
 
 	// temp code - just to compile
