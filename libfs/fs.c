@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -284,8 +285,8 @@ int fs_delete(const char *filename)
 	uint16_t blockNum, index, content;
 	content = rd[rdirIndex].first_data_block_index;
 	while (content != FAT_EOC){
-		blockNum = content / FS_FILE_MAX_COUNT;
-		index = content % NUM_ENTRIES_FAT_BLOCK;
+		blockNum = content / (NUM_ENTRIES_FAT_BLOCK+1); // used to be FS_FILE_MAX_COUNT? not sure what i was thinkin
+		index = content % (NUM_ENTRIES_FAT_BLOCK+1);
 
 		content = fat[blockNum].fat_entries[index];
 		fat[blockNum].fat_entries[index] = 0;
@@ -398,9 +399,13 @@ int fs_lseek(int fd, size_t offset)
 
 
 /* Phase 4 */
-int index_with_offset(void)
+int fd_offset(int fd)
 {
-	return 0;
+	// No FS currently mounted OR fd invalid
+	if (!mounted || !fd_is_valid(fd))
+		return -1;
+
+	return fdTable[fd].offset;
 }
 
 int allocate_block(void)
@@ -414,7 +419,58 @@ int fs_write(int fd, void *buf, size_t count)
 	if (!mounted || !fd_is_valid(fd) || buf == NULL)
 		return -1;
 
-	
+	// Bounce array
+	uint8_t *bounce = malloc(sizeof(uint8_t) * BLOCK_SIZE);
+
+	// Number of bytes written into data blocks
+	int bufIndex = 0;
+
+	// Variables to handle offset
+	int offset, fileSize, currCount;
+	offset = fd_offset(fd);
+	fileSize = fs_stat(fd);
+	currCount = count;
+
+	// Find offset location in data blocks
+	numBlock = ceil(offset / BLOCK_SIZE);
+
+	// Variables to handle data block access
+	uint16_t blockNum, index, content;
+	int rdirIndex = fdTable[fd].file->first_data_block_index;
+	content = rd[rdirIndex+numBlock].first_data_block_index;
+
+	while (bufIndex < count){
+		blockNum = content / (NUM_ENTRIES_FAT_BLOCK+1);
+		index = content % (NUM_ENTRIES_FAT_BLOCK+1);
+		
+		int size = currCount - offset;
+		size = (size < BLOCK_SIZE) ? size : BLOCK_SIZE - offset;
+
+		// Perform write
+		if (size == BLOCK_SIZE){
+			block_write(blockNum + sb.data_block_index, ((uint8_t*)buf)+bufIndex);
+		} else {
+			block_read(blockNum + sb.data_block_index, bounce);
+			memcpy((((uint8_t*)buf)+bufIndex, (uint8_t*)bounce)+offset, size);
+			block_write(blockNum + sb.data_block_index, ((uint8_t*)buf)+bufIndex);
+		}
+		
+		// Update offset and currCount
+		offset += size;
+		currCount -= size;
+		bufIndex += size;
+
+		// Get next data block number
+		if (content == FAT_EOC){
+			content = allocate_block();
+		} else {
+			content = fat[blockNum].fat_entries[index];
+		}
+			
+		// Reach end of buf or no more space in disk
+		if (currCount == 0 /* || no space*/)
+			return bufIndex;		
+	}
 
 
 	// temp code - just to compile
@@ -429,25 +485,51 @@ int fs_read(int fd, void *buf, size_t count)
 	if (!mounted || !fd_is_valid(fd) || buf == NULL)
 		return -1;
 
+	// Bounce array
+	uint8_t *bounce = malloc(sizeof(uint8_t) * BLOCK_SIZE);
 
-	/* Dummy code, not really sure what I'm doing yet lol */
+	// Number of bytes read into buf
+	int bufIndex = 0;
+
+	// Variables to handle offset
+	int offset, fileSize, numBlockRead, currCount;
+	offset = fd_offset(fd);
+	fileSize = fs_stat(fd);
+	numBlockRead = ceil(count / BLOCK_SIZE);
+	currCount = count;
+
+	// Variables to handle data block access
 	uint16_t blockNum, index, content;
 	int rdirIndex = fdTable[fd].file->first_data_block_index;
 	content = rd[rdirIndex].first_data_block_index;
-	while (content != FAT_EOC){
-		blockNum = content / FS_FILE_MAX_COUNT;
-		index = content % NUM_ENTRIES_FAT_BLOCK;
 
+	for (int i = 0; i < numBlockRead; i++){
+		blockNum = content / (NUM_ENTRIES_FAT_BLOCK+1);
+		index = content % (NUM_ENTRIES_FAT_BLOCK+1);
+
+		int size = currCount - offset;
+		size = (size < BLOCK_SIZE) ? size : BLOCK_SIZE - offset; 
+
+		// Perform read
+		if (size == BLOCK_SIZE){
+			block_read(blockNum + sb.data_block_index, ((uint8_t*)buf)+bufIndex);
+		} else {
+			block_read(blockNum + sb.data_block_index, bounce);
+			memcpy(((uint8_t*)bounce)+offset, ((uint8_t*)buf)+bufIndex, size);
+		}
+		
+		// Update offset and currCount
+		offset  += size;
+		currCount -= size;
+		bufIndex += size;
+
+		// Reach EOF
+		if (content == FAT_EOC)
+			// update offset in struct lseek()
+			return bufIndex;
+
+		// Get next data block number
 		content = fat[blockNum].fat_entries[index];
-		fat[blockNum].fat_entries[index] = 0;
 	}
-	/* End */
-
-
-
-	// temp code - just to compile
-	if (fd && buf && count)
-		return 0; 
-	return 0;
 }
 
