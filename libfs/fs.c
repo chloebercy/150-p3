@@ -145,11 +145,21 @@ int fat_free(void)
 {
 	int count = 0;
 
-	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++)
-		for (int entryIndex = 0; entryIndex < NUM_ENTRIES_FAT_BLOCK; entryIndex++)
+	int block_count = 0;
+	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++){
+		for (int entryIndex = 0; entryIndex < NUM_ENTRIES_FAT_BLOCK; entryIndex++){
+			
+			// Ignores extra unused FAT blocks
+			if (block_count >= sb.total_data_blocks)
+				break;
+			
 			if (fat[fatIndex].fat_entries[entryIndex] == 0)
 				count ++;
 
+			block_count++;
+		}
+
+	}
 	return count;
 }
 
@@ -400,7 +410,7 @@ int allocate_block(void)
 
 int fs_write(int fd, void *buf, size_t count)
 {
-	// No FS currently mounted OR fd invalid || buf is NULL
+	// No FS currently mounted || fd invalid || buf is NULL
 	if (!mounted || !fd_is_valid(fd) || buf == NULL)
 		return -1;
 
@@ -415,10 +425,23 @@ int fs_write(int fd, void *buf, size_t count)
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	// No FS currently mounted OR fd invalid || buf is NULL
+	// No FS currently mounted || fd invalid || buf is NULL
 	if (!mounted || !fd_is_valid(fd) || buf == NULL)
 		return -1;
 
+
+	/* Dummy code, not really sure what I'm doing yet lol */
+	uint16_t blockNum, index, content;
+	int rdirIndex = fdTable[fd].file->first_data_block_index;
+	content = rd[rdirIndex].first_data_block_index;
+	while (content != FAT_EOC){
+		blockNum = content / FS_FILE_MAX_COUNT;
+		index = content % NUM_ENTRIES_FAT_BLOCK;
+
+		content = fat[blockNum].fat_entries[index];
+		fat[blockNum].fat_entries[index] = 0;
+	}
+	/* End */
 
 
 
