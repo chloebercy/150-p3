@@ -42,7 +42,6 @@ struct __attribute__((__packed__)) root_directory_entry{
 struct file_descriptor{
 	int offset;
 	struct root_directory_entry *file;
-	//int file_descriptor;	
 };
 
 struct superblock sb;
@@ -141,12 +140,13 @@ int fs_umount(void)
 	return 0;
 }
 
-/* Returns sum of free entries in File Allocation Tree. */
-int fat_free(void)
+/* Returns sum of free entries in File Allocation Tree or first free entry
+	depending on value bool 'sum'. */
+int fat_free(bool sum)
 {
 	int count = 0;
-
 	int block_count = 0;
+
 	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++){
 		for (int entryIndex = 0; entryIndex < NUM_ENTRIES_FAT_BLOCK; entryIndex++){
 			
@@ -154,8 +154,12 @@ int fat_free(void)
 			if (block_count >= sb.total_data_blocks)
 				break;
 			
-			if (fat[fatIndex].fat_entries[entryIndex] == 0)
-				count ++;
+			if (fat[fatIndex].fat_entries[entryIndex] == 0){
+				if (sum == false)
+					return entryIndex + (fatIndex * NUM_ENTRIES_FAT_BLOCK);
+				count++;
+			}
+				r5fgv
 
 			block_count++;
 		}
@@ -165,7 +169,7 @@ int fat_free(void)
 }
 
 /* Returns either sum of free entries in root directory or first free entry
-   depending on value of bool 'total'. */
+   depending on value of bool 'sum'. */
 int rdir_free(bool sum)
 {
 	int count = 0;
@@ -194,7 +198,7 @@ int fs_info(void)
 	printf("rdir_blk=%d\n", sb.fat_blocks + 1);
 	printf("data_blk=%d\n", sb.fat_blocks + 2);
 	printf("data_blk_count=%d\n", sb.total_data_blocks);
-	printf("fat_free_ratio=%d/%d\n", fat_free(), sb.total_data_blocks);
+	printf("fat_free_ratio=%d/%d\n", fat_free(true), sb.total_data_blocks);
 	printf("rdir_free_ratio=%d/%d\n", rdir_free(true), FS_FILE_MAX_COUNT);
 
 	return 0;
@@ -408,6 +412,7 @@ int fd_offset(int fd)
 	return fdTable[fd].offset;
 }
 
+/* Return index of newly allocated Data block*/
 int allocate_block(void)
 {
 	return 0;
@@ -419,16 +424,16 @@ int fs_write(int fd, void *buf, size_t count)
 	if (!mounted || !fd_is_valid(fd) || buf == NULL)
 		return -1;
 
-	// Bounce array
+	// Initalize bounce array
 	uint8_t *bounce = malloc(sizeof(uint8_t) * BLOCK_SIZE);
 
-	// Number of bytes written into data blocks
+	// Number of bytes written into data blocks (rename to bytesWritten?)
 	int bufIndex = 0;
 
 	// Variables to handle offset
 	int offset, fileSize, currCount;
 	offset = fd_offset(fd);
-	fileSize = fs_stat(fd);
+	fileSize = fs_stat(fd); // ?? not sure needed for write 
 	currCount = count;
 
 	// Find offset location in data blocks
@@ -436,11 +441,11 @@ int fs_write(int fd, void *buf, size_t count)
 
 	// Variables to handle data block access
 	uint16_t blockNum, index, content;
-	int rdirIndex = fdTable[fd].file->first_data_block_index;
-	content = rd[rdirIndex+numBlock].first_data_block_index;
+	content = fdTable[fd].file->first_data_block_index;
+
 
 	while (bufIndex < count){
-		blockNum = content / (NUM_ENTRIES_FAT_BLOCK+1);
+		blockNum = content / (NUM_ENTRIES_FAT_BLOCK+1); // ?? idk if +1 needed
 		index = content % (NUM_ENTRIES_FAT_BLOCK+1);
 		
 		int size = currCount - offset;
@@ -488,7 +493,7 @@ int fs_read(int fd, void *buf, size_t count)
 	// Bounce array
 	uint8_t *bounce = malloc(sizeof(uint8_t) * BLOCK_SIZE);
 
-	// Number of bytes read into buf
+	// Number of bytes read into buf (rename to bytesRead?)
 	int bufIndex = 0;
 
 	// Variables to handle offset
@@ -500,8 +505,7 @@ int fs_read(int fd, void *buf, size_t count)
 
 	// Variables to handle data block access
 	uint16_t blockNum, index, content;
-	int rdirIndex = fdTable[fd].file->first_data_block_index;
-	content = rd[rdirIndex].first_data_block_index;
+	content = fdTable[fd].file->first_data_block_index;
 
 	for (int i = 0; i < numBlockRead; i++){
 		blockNum = content / (NUM_ENTRIES_FAT_BLOCK+1);
