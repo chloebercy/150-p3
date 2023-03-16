@@ -3,7 +3,7 @@ programs := \
 			simple_writer.x \
 			simple_reader.x \
 			test_fs.x \
-			p3_tester.x
+			p4_tester.x
 
 # File-system library
 FSLIB := libfs

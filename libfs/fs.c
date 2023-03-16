@@ -419,10 +419,8 @@ int fd_offset(int fd)
 }
 
 /* Return index of newly allocated Data block*/
-int allocate_block(int *flag)
+int allocate_block(void)
 {
-	*flag = 1;
-
 	int freeBlock, FATblockNum, entry;
 	
 	freeBlock = fat_free(false);
@@ -446,14 +444,10 @@ int fs_write(int fd, void *buf, size_t count)
 
 	if (DEBUG) { printf("starting Write:"); fs_ls(); }
 
-	// Initalize bounce array
-	uint8_t bounce[BLOCK_SIZE];
-
 	// Number of bytes written into data blocks (rename to bytesWritten?)
 	int bufIndex = 0;
 
 	// Variables
-	int increaseSizeFlag = 0;
 	uint16_t offset, blockStart, currCount;
 	uint16_t FATblockNum, index, content;
 
@@ -466,7 +460,7 @@ int fs_write(int fd, void *buf, size_t count)
 
 	// If first block is unallocated (file not created yet)
 	if (content == FAT_EOC){
-		content = allocate_block(&increaseSizeFlag);
+		content = allocate_block();
 		fdTable[fd].file->first_data_block_index = content;
 	}
 
@@ -476,22 +470,31 @@ int fs_write(int fd, void *buf, size_t count)
 		index = content % (NUM_ENTRIES_FAT_BLOCK+1);
 
 		content = fat[FATblockNum].fat_entries[index];
+
+		// Need to create a new block
+		if (content == FAT_EOC){
+			content = allocate_block();
+			fat[FATblockNum].fat_entries[index] = content;
+		}
 	}
+	
 
 	if (DEBUG) {printf("staring index offset location is : content = %d\n", content);}
 
-	while (currCount != 0){
+	while (currCount){
+		// Initalize bounce array
+		uint8_t bounce[BLOCK_SIZE];
+
 		FATblockNum = content / (NUM_ENTRIES_FAT_BLOCK+1); // ?? idk if +1 needed
 		index = content % (NUM_ENTRIES_FAT_BLOCK+1);
 
 		if (DEBUG) {printf("I am writing to block pointed to by fat[%d].entry[%d]\n", FATblockNum, index);}
 		
 		// Calculate much to write into this block
-		int size = currCount;
-		size = (size <= BLOCK_SIZE) ? size : BLOCK_SIZE - (offset % BLOCK_SIZE);
+		int size = ((offset % BLOCK_SIZE) + currCount <= BLOCK_SIZE) ? currCount : BLOCK_SIZE - (offset % BLOCK_SIZE);
 
 		// Calculate index of data block we will be accessing
-		int block = (FATblockNum*4096) + index + sb.data_block_index;
+		int block = (FATblockNum*NUM_ENTRIES_FAT_BLOCK) + index + sb.data_block_index;
 
 		// Perform write
 		if (size == BLOCK_SIZE){
@@ -507,25 +510,30 @@ int fs_write(int fd, void *buf, size_t count)
 		
 		// Update offset, currCount, bufIndex, and size of file
 		offset += size;
+		// Increasese size if writing beyond original size
+		if (offset > fdTable[fd].file->file_size) 
+			fdTable[fd].file->file_size = offset;
 		currCount -= size;
 		bufIndex += size;
-		if (increaseSizeFlag == 1) 
-			fdTable[fd].file->file_size += size;
 
 		// No more space in disk
 		if (fat_free(true) == 0){
 			fs_lseek(fd, offset);
 			return bufIndex;
 		}
-				
+		printf("rn: offset=%d, currCount=%d, bufIndex=%d\n", offset, currCount, bufIndex);
+
 		// Get next data block number
-		if (content == FAT_EOC)
-			content = allocate_block(&increaseSizeFlag);
-		else 
-			content = fat[FATblockNum].fat_entries[index];	
+		content = fat[FATblockNum].fat_entries[index];	
+		if (currCount && content == FAT_EOC){
+			content = allocate_block();
+			fat[FATblockNum].fat_entries[index] = content;
+			if (DEBUG) { printf("Im allocating new block, content=%d\n", content);}
+		}	
 	}
 
 	fs_lseek(fd, offset);
+	if (DEBUG) {printf("done writing, offset=%d, size=%d\n", offset, fdTable[fd].file->file_size);}
 	return bufIndex;	
 }
 
@@ -541,9 +549,6 @@ int fs_read(int fd, void *buf, size_t count)
 
 	if (DEBUG) { printf("starting read:"); fs_ls(); }
 
-	// Initalize bounce array
-	uint8_t bounce[BLOCK_SIZE];
-
 	// Number of bytes read into buf (rename to bytesRead?)
 	int bufIndex = 0;
 
@@ -553,7 +558,7 @@ int fs_read(int fd, void *buf, size_t count)
 
 	offset = fd_offset(fd);
 	blockStart = offset / BLOCK_SIZE;
-	numBlockRead = ceil((double)count / BLOCK_SIZE);
+	numBlockRead = ceil((double)(count + offset) / BLOCK_SIZE) - blockStart;
 	currCount = count;
 	content = fdTable[fd].file->first_data_block_index;
 
@@ -570,6 +575,9 @@ int fs_read(int fd, void *buf, size_t count)
 	if (DEBUG) { printf("staring index offset loc is : content = %d\n", content); }
 
 	for (int i = 0; i < numBlockRead; i++){
+		// Initalize bounce array
+		uint8_t bounce[BLOCK_SIZE];
+
 		FATblockNum = content / (NUM_ENTRIES_FAT_BLOCK+1);
 		index = content % (NUM_ENTRIES_FAT_BLOCK+1);
 
@@ -577,11 +585,10 @@ int fs_read(int fd, void *buf, size_t count)
 		printf("this index is : content = %d\n", content); }
 
 		// Calculate much to read in this block
-		int size = currCount;
-		size = (size <= BLOCK_SIZE) ? size : BLOCK_SIZE - (offset % BLOCK_SIZE); 
+		int size = ((offset % BLOCK_SIZE) + currCount <= BLOCK_SIZE) ? currCount : BLOCK_SIZE - (offset % BLOCK_SIZE);
 
 		// Calculate index of data block we will be accessing
-		int block = (FATblockNum*4096) + index + sb.data_block_index;
+		int block = (FATblockNum*NUM_ENTRIES_FAT_BLOCK) + index + sb.data_block_index;
 
 		// Perform read
 		if (size == BLOCK_SIZE){
