@@ -40,24 +40,24 @@ void incrementalWriting(void){
 	ret = fs_write(fd1, smalldata, sizeof(smalldata));
 	ASSERT(ret == sizeof(smalldata), "fs_write smallData file1");
 
+	/* Read 10 bytes @offset0*/
 	ret = fs_lseek(fd1, 0);
 	ASSERT(!ret, "fs_lseek file1 @offset0");
 	ret = fs_read(fd1, buf, 10);
-	//printf("@offset0, buf = %s\n", buf);
 	ASSERT(ret == 10, "fs_read file1 @offset0");
 	ASSERT(!strncmp(buf, "bbbbbbbbbb", 10), "fs_read file1 @offset0");
 
+	/* Read 10 bytes @offset2048*/
 	ret = fs_lseek(fd1, 2048);
 	ASSERT(!ret, "fs_lseek file1 @offset2048");
 	ret = fs_read(fd1, buf, 10);
-	//printf("@offset2048, buf = %s\n", buf);
 	ASSERT(ret == 10, "fs_read file1 @offset2048");
 	ASSERT(!strncmp(buf, "cccccccccc", 10), "fs_read file1 @offset2048");
 
+	/* Read 10 bytes @offset4096*/
 	ret = fs_lseek(fd1, 4096);
 	ASSERT(!ret, "fs_lseek file1 @offset4096");
 	ret = fs_read(fd1, buf, 10);
-	//printf("@offset4097, buf = %s", buf);
 	ASSERT(ret == 10, "fs_read file1 @offset4096");
 	ASSERT(!strncmp(buf, "abcdefghij", 10), "fs_read file1 @offset4096");
 
@@ -89,24 +89,24 @@ void reWriting(void){
 	ret = fs_write(fd2, halfBlock, sizeof(halfBlock));
 	ASSERT(ret == sizeof(halfBlock), "fs_write halfBlock file2");
 
+	/* Read 10 bytes @offset0*/
 	ret = fs_lseek(fd2, 0);
 	ASSERT(!ret, "fs_lseek file2 @offset0");
 	ret = fs_read(fd2, buf, 10);
-	printf("------@offset0, buf = %s------\n", buf);
 	ASSERT(ret == 10, "fs_read file2 @offset0");
 	ASSERT(!strncmp(buf, "aaaaaaaaaa", 10), "fs_read file2 @offset0");
 
+	/* Read 10 bytes @offset2048*/
 	ret = fs_lseek(fd2, 2048);
 	ASSERT(!ret, "fs_lseek file2 @offset2048");
 	ret = fs_read(fd2, buf, 10);
-	printf("------@offset2048, buf = %s------\n", buf);
 	ASSERT(ret == 10, "fs_read file2 @offset2048");
 	ASSERT(!strncmp(buf, "abcdefghij", 10), "fs_read file2 @offset2048");
 
+	/* Read 10 bytes @offset4090*/
 	ret = fs_lseek(fd2, 4090);
 	ASSERT(!ret, "fs_lseek file2 @offset4090");
 	ret = fs_read(fd2, buf, 10);
-	printf("------@offset4090, buf = %s------\n", buf);
 	ASSERT(ret == 10, "fs_read file2 @offset4090");
 	ASSERT(!strncmp(buf, "bbbbbbbbbb", 10), "fs_read file2 @offset4090");
 
@@ -148,6 +148,9 @@ int main(int argc, char *argv[])
 	ASSERT(!ret, "fs_delete file1");
 	ret = fs_delete("file3");
 	ASSERT(!ret, "fs_delete file1");
+
+	fs_info();
+
 	fs_umount();
 
 	return 0;
