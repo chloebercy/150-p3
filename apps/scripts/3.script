@@ -1,6 +1,0 @@
-MOUNT
-CREATE	file_fs
-OPEN	file_fs
-CLOSE
-DELETE	file_fs
-UMOUNT
