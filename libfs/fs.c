@@ -13,7 +13,7 @@
 #define NUM_ENTRIES_FAT_BLOCK 2048
 #define FAT_EOC 0xFFFF
 
-bool DEBUG = true;
+bool DEBUG = false;
 
 /* Superblock data structure */
 struct __attribute__((__packed__)) superblock{
@@ -24,7 +24,6 @@ struct __attribute__((__packed__)) superblock{
 	uint16_t 	total_data_blocks;
 	uint8_t 	fat_blocks;
 	uint8_t		padding[4079];
-
 };
 
 /* FAT block data structure */
@@ -136,14 +135,11 @@ int fs_umount(void)
 		return -1;
 
 	// Check if FDs are still open
-	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++){
+	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++)
 		if (fdTable[fd].file != NULL)
 			return -1;
-	}
-
-
+	
 	mounted = 0;
-
 	return 0;
 }
 
@@ -156,7 +152,6 @@ int fat_free(bool sum)
 
 	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++){
 		for (int entryIndex = 0; entryIndex < NUM_ENTRIES_FAT_BLOCK; entryIndex++){
-			
 			// Ignores extra unused FAT blocks
 			if (block_count >= sb.total_data_blocks)
 				break;
@@ -166,10 +161,8 @@ int fat_free(bool sum)
 					return entryIndex + (fatIndex * NUM_ENTRIES_FAT_BLOCK);
 				count++;
 			}
-
 			block_count++;
 		}
-
 	}
 	return count;
 }
@@ -227,7 +220,6 @@ int fs_create(const char *filename)
 	// No FS currently mounted
 	if (!mounted)
 		return -1;
-
 
 	// File name @filename is invalid
 	if (strlen(filename) == 0 || strcmp(filename,"\0") == 0)
