@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@
 #define NUM_ENTRIES_FAT_BLOCK 2048
 #define FAT_EOC 0xFFFF
 
+bool DEBUG = false;
 
 /* Superblock data structure */
 struct __attribute__((__packed__)) superblock{
@@ -22,7 +24,6 @@ struct __attribute__((__packed__)) superblock{
 	uint16_t 	total_data_blocks;
 	uint8_t 	fat_blocks;
 	uint8_t		padding[4079];
-
 };
 
 /* FAT block data structure */
@@ -41,7 +42,6 @@ struct __attribute__((__packed__)) root_directory_entry{
 struct file_descriptor{
 	int offset;
 	struct root_directory_entry *file;
-	//int file_descriptor;	
 };
 
 struct superblock sb;
@@ -106,11 +106,17 @@ int fs_mount(const char *diskname)
 
 	mounted = 1;
 
+	if (DEBUG)
+		fs_info();
+
 	return 0;
 }
 
 int fs_umount(void)
 {
+	if (DEBUG)
+		fs_info();
+
 	// Write Metadata to Disk - Superblock
 	if (block_write(0, &sb) == -1)
 		return -1;
@@ -129,42 +135,40 @@ int fs_umount(void)
 		return -1;
 
 	// Check if FDs are still open
-	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++){
+	for (int fd = 0; fd < FS_OPEN_MAX_COUNT; fd++)
 		if (fdTable[fd].file != NULL)
 			return -1;
-	}
-
-
+	
 	mounted = 0;
-
 	return 0;
 }
 
-/* Returns sum of free entries in File Allocation Tree. */
-int fat_free(void)
+/* Returns sum of free entries in File Allocation Tree or first free entry
+	depending on value bool 'sum'. */
+int fat_free(bool sum)
 {
 	int count = 0;
-
 	int block_count = 0;
+
 	for (uint8_t fatIndex = 0; fatIndex < sb.fat_blocks; fatIndex++){
 		for (int entryIndex = 0; entryIndex < NUM_ENTRIES_FAT_BLOCK; entryIndex++){
-			
 			// Ignores extra unused FAT blocks
 			if (block_count >= sb.total_data_blocks)
 				break;
 			
-			if (fat[fatIndex].fat_entries[entryIndex] == 0)
-				count ++;
-
+			if (fat[fatIndex].fat_entries[entryIndex] == 0){
+				if (sum == false)
+					return entryIndex + (fatIndex * NUM_ENTRIES_FAT_BLOCK);
+				count++;
+			}
 			block_count++;
 		}
-
 	}
 	return count;
 }
 
 /* Returns either sum of free entries in root directory or first free entry
-   depending on value of bool 'total'. */
+   depending on value of bool 'sum'. */
 int rdir_free(bool sum)
 {
 	int count = 0;
@@ -193,7 +197,7 @@ int fs_info(void)
 	printf("rdir_blk=%d\n", sb.fat_blocks + 1);
 	printf("data_blk=%d\n", sb.fat_blocks + 2);
 	printf("data_blk_count=%d\n", sb.total_data_blocks);
-	printf("fat_free_ratio=%d/%d\n", fat_free(), sb.total_data_blocks);
+	printf("fat_free_ratio=%d/%d\n", fat_free(true), sb.total_data_blocks);
 	printf("rdir_free_ratio=%d/%d\n", rdir_free(true), FS_FILE_MAX_COUNT);
 
 	return 0;
@@ -216,7 +220,6 @@ int fs_create(const char *filename)
 	// No FS currently mounted
 	if (!mounted)
 		return -1;
-
 
 	// File name @filename is invalid
 	if (strlen(filename) == 0 || strcmp(filename,"\0") == 0)
@@ -284,7 +287,7 @@ int fs_delete(const char *filename)
 	uint16_t blockNum, index, content;
 	content = rd[rdirIndex].first_data_block_index;
 	while (content != FAT_EOC){
-		blockNum = content / FS_FILE_MAX_COUNT;
+		blockNum = content / NUM_ENTRIES_FAT_BLOCK;
 		index = content % NUM_ENTRIES_FAT_BLOCK;
 
 		content = fat[blockNum].fat_entries[index];
@@ -398,14 +401,27 @@ int fs_lseek(int fd, size_t offset)
 
 
 /* Phase 4 */
-int index_with_offset(void)
+int fd_offset(int fd)
 {
-	return 0;
+	// No FS currently mounted OR fd invalid
+	if (!mounted || !fd_is_valid(fd))
+		return -1;
+
+	return fdTable[fd].offset;
 }
 
+/* Return index of newly allocated Data block*/
 int allocate_block(void)
 {
-	return 0;
+	int freeBlock, FATblockNum, entry;
+	
+	freeBlock = fat_free(false);
+	FATblockNum = freeBlock / (NUM_ENTRIES_FAT_BLOCK); 
+	entry = freeBlock % NUM_ENTRIES_FAT_BLOCK;
+
+	fat[FATblockNum].fat_entries[entry] = FAT_EOC;
+
+	return freeBlock;
 }
 
 int fs_write(int fd, void *buf, size_t count)
@@ -414,13 +430,99 @@ int fs_write(int fd, void *buf, size_t count)
 	if (!mounted || !fd_is_valid(fd) || buf == NULL)
 		return -1;
 
+	// Nothing to Write
+	if (count == 0)
+		return count;
+
+	// Number of bytes written into data blocks (rename to bytesWritten?)
+	int bufIndex = 0;
+
+	// Variables
+	uint16_t offset, blockStart, currCount;
+	uint16_t FATblockNum, index, content;
+
+	offset = fd_offset(fd);
+	blockStart = offset / BLOCK_SIZE;
+	currCount = count;
+	content = fdTable[fd].file->first_data_block_index;
+
+	// If first block is unallocated (file not created yet)
+	if (content == FAT_EOC){
+		content = allocate_block();
+		fdTable[fd].file->first_data_block_index = content;
+	}
+
+	// Find offset location in data blocks to start write
+	for (int i = 0; i < blockStart; i++){
+		FATblockNum = content / NUM_ENTRIES_FAT_BLOCK;
+		index = content % NUM_ENTRIES_FAT_BLOCK;
+
+		content = fat[FATblockNum].fat_entries[index];
+
+		// Need to create a new block
+		if (content == FAT_EOC){
+			content = allocate_block();
+			fat[FATblockNum].fat_entries[index] = content;
+		}
+	}
 	
+	if (DEBUG)
+		printf("\nfs_write() start : offset=%d,blockStart=%d,currCount=%d,content=%d\n",
+		 offset, blockStart, currCount, content);
 
+	while (currCount){
+		uint8_t bounce[BLOCK_SIZE];
 
-	// temp code - just to compile
-	if (fd && buf && count)
-		return 0;
-	return 0;	
+		FATblockNum = content / NUM_ENTRIES_FAT_BLOCK;
+		index = content % NUM_ENTRIES_FAT_BLOCK;
+
+		if (DEBUG){printf("accesing block pointed to by fat[%d].entries[%d]=#%d\n", FATblockNum, index, content);}
+		
+		// Calculate much to write into this block
+		int size = ((offset%BLOCK_SIZE)+currCount<=BLOCK_SIZE) ? currCount : BLOCK_SIZE-(offset%BLOCK_SIZE);
+
+		// Calculate index of data block we will be accessing
+		int block = (FATblockNum*NUM_ENTRIES_FAT_BLOCK) + index + sb.data_block_index;
+
+		// Perform write
+		if (size == BLOCK_SIZE){
+			block_write(block, ((uint8_t*)buf)+bufIndex);
+		} else {
+			block_read(block, &bounce);
+			memcpy(((uint8_t*)&bounce)+(offset%BLOCK_SIZE), ((uint8_t*)buf)+bufIndex, size);
+			block_write(block, &bounce);	
+		}
+		if (DEBUG){printf("wrote to: datablock#%d=bounce='%s'\n", block, bounce);}
+
+		// Update offset, currCount, bufIndex, and size of file if needed
+		offset += size;
+		if (offset > fdTable[fd].file->file_size) 
+			fdTable[fd].file->file_size = offset;
+		currCount -= size;
+		bufIndex += size;
+
+		// No more space in disk
+		if (fat_free(true) == 0){
+			fs_lseek(fd, offset);
+			return bufIndex;
+		}
+
+		if (DEBUG)
+			printf("after 1 iter write : offset=%d,currCount=%d,bufIndex=%d\n", 
+			offset, currCount, bufIndex);
+
+		// Get next data block number
+		content = fat[FATblockNum].fat_entries[index];	
+		if (currCount && content == FAT_EOC){
+			content = allocate_block();
+			fat[FATblockNum].fat_entries[index] = content;
+			if (DEBUG){printf("allocated new data block%d\n", content);}
+		}	
+	}
+
+	fs_lseek(fd, offset);
+	if (DEBUG){printf("fs_write() success : offset=%d,size=%d\n", offset, fdTable[fd].file->file_size);}
+	return bufIndex;	
 }
 
 int fs_read(int fd, void *buf, size_t count)
@@ -429,25 +531,74 @@ int fs_read(int fd, void *buf, size_t count)
 	if (!mounted || !fd_is_valid(fd) || buf == NULL)
 		return -1;
 
+	// Nothing to Read
+	if (count == 0)
+		return count;
 
-	/* Dummy code, not really sure what I'm doing yet lol */
-	uint16_t blockNum, index, content;
-	int rdirIndex = fdTable[fd].file->first_data_block_index;
-	content = rd[rdirIndex].first_data_block_index;
-	while (content != FAT_EOC){
-		blockNum = content / FS_FILE_MAX_COUNT;
+	// Number of bytes read into buf (rename to bytesRead?)
+	int bufIndex = 0;
+
+	// Variables
+	uint16_t offset, blockStart, sumBlockRead, currCount;
+	uint16_t FATblockNum, index, content;
+
+	offset = fd_offset(fd);
+	blockStart = offset / BLOCK_SIZE;
+	sumBlockRead = ceil((double)(count + offset) / BLOCK_SIZE) - blockStart;
+	currCount = count;
+	content = fdTable[fd].file->first_data_block_index;
+
+	// Find offset location in data blocks to start read
+	for (int i = 0; i < blockStart; i++){
+		FATblockNum = content / NUM_ENTRIES_FAT_BLOCK;
 		index = content % NUM_ENTRIES_FAT_BLOCK;
 
-		content = fat[blockNum].fat_entries[index];
-		fat[blockNum].fat_entries[index] = 0;
+		content = fat[FATblockNum].fat_entries[index];
 	}
-	/* End */
 
+	if (DEBUG)
+		printf("\nfs_read() start : offset=%d,currCount=%d\n,sumBlockRead=%d,content/startread@=%d\n", 
+		 offset, currCount, sumBlockRead, content);
 
+	for (int i = 0; i < sumBlockRead; i++){
+		uint8_t bounce[BLOCK_SIZE];
 
-	// temp code - just to compile
-	if (fd && buf && count)
-		return 0; 
-	return 0;
+		FATblockNum = content / NUM_ENTRIES_FAT_BLOCK;
+		index = content % NUM_ENTRIES_FAT_BLOCK;
+
+		if (DEBUG){printf("accesing block pointed to by fat[%d].entries[%d]=#%d\n", FATblockNum, index, content);}
+
+		// Calculate much to read in this block
+		int size = ((offset % BLOCK_SIZE) + currCount <= BLOCK_SIZE) ? currCount : BLOCK_SIZE - (offset % BLOCK_SIZE);
+
+		// Calculate index of data block we will be accessing
+		int block = (FATblockNum*NUM_ENTRIES_FAT_BLOCK) + index + sb.data_block_index;
+
+		// Perform read
+		if (size == BLOCK_SIZE){
+			block_read(block, ((uint8_t*)buf)+bufIndex);
+		} else {
+			block_read(block, &bounce);
+			memcpy(((uint8_t*)buf)+bufIndex, ((uint8_t*)&bounce)+(offset%BLOCK_SIZE), size);
+		}
+		if (DEBUG){printf("read from: datablock#%d\n", block);}
+		
+		// Update offset and currCount
+		offset  += size;
+		currCount -= size;
+		bufIndex += size;
+
+		// Reach EOF before end of buf
+		if (content == FAT_EOC){
+			fs_lseek(fd, offset);
+			return bufIndex;
+		}
+
+		// Get next data block number
+		content = fat[FATblockNum].fat_entries[index];
+	}
+
+	fs_lseek(fd, offset);
+	if (DEBUG){printf("fs_read() success : offset=%d\n", offset);}
+	return bufIndex;
 }
-
